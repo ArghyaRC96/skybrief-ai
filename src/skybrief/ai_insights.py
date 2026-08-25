@@ -283,15 +283,14 @@ def generate_weather_insights(
     current_summary,
     forecast_df,
     daily_summary_df,
-    retry_delay_seconds=1.5,
 ):
     """
     Generate SkyBrief weather insights.
 
     Strategy:
-    1. Gemini 3.7 Flash
-    2. Retry once if failure appears transient
-    3. Fall back to Gemini 3.6 Flash
+    1. Try Gemini 3.7 Flash once.
+    2. If it fails for any reason, immediately use
+       Gemini 3.6 Flash.
     """
 
     if not api_key:
@@ -309,57 +308,60 @@ def generate_weather_insights(
         api_key=api_key
     )
 
-    primary_errors = []
+    primary_error = None
 
-    for attempt in range(2):
-        try:
-            text = _generate_with_model(
-                client=client,
-                model_name=PRIMARY_MODEL,
-                prompt=prompt,
-            )
 
-            return {
-                "text": text,
-                "model": PRIMARY_MODEL,
-                "used_fallback": False,
-            }
-
-        except Exception as error:
-            primary_errors.append(str(error))
-
-            is_transient = _is_transient_error(
-                error
-            )
-
-            if (
-                attempt == 0
-                and is_transient
-            ):
-                time.sleep(
-                    retry_delay_seconds
-                )
-
-                continue
-
-            break
+    # --------------------------------------------------------
+    # Primary model: one attempt only
+    # --------------------------------------------------------
 
     try:
-        text = _generate_with_model(
+
+        text_result = _generate_with_model(
+            client=client,
+            model_name=PRIMARY_MODEL,
+            prompt=prompt,
+        )
+
+        return {
+            "text": text_result,
+            "model": PRIMARY_MODEL,
+            "used_fallback": False,
+            "primary_error": None,
+        }
+
+
+    except Exception as error:
+
+        primary_error = str(
+            error
+        )
+
+
+    # --------------------------------------------------------
+    # Immediate fallback
+    # --------------------------------------------------------
+
+    try:
+
+        text_result = _generate_with_model(
             client=client,
             model_name=FALLBACK_MODEL,
             prompt=prompt,
         )
 
         return {
-            "text": text,
+            "text": text_result,
             "model": FALLBACK_MODEL,
             "used_fallback": True,
+            "primary_error": primary_error,
         }
 
+
     except Exception as fallback_error:
+
         raise RuntimeError(
             "SkyBrief AI insight generation failed. "
-            f"Primary errors: {primary_errors}. "
+            f"Primary error: {primary_error}. "
             f"Fallback error: {fallback_error}"
         ) from fallback_error

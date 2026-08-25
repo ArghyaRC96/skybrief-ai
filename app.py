@@ -1,4 +1,6 @@
 import pandas as pd
+import time
+
 import streamlit as st
 
 from src.skybrief.ai_insights import generate_weather_insights
@@ -1083,7 +1085,7 @@ if "skybrief_report" in st.session_state:
     st.divider()
 
     st.subheader(
-        "📨 Send the Full SkyBrief"
+        "\U0001F4E8 Send the Full SkyBrief"
     )
 
 
@@ -1105,13 +1107,105 @@ if "skybrief_report" in st.session_state:
     )
 
 
+    # --------------------------------------------------------
+    # Show success message after Streamlit rerun
+    # --------------------------------------------------------
+
+    email_success_message = (
+        st.session_state.pop(
+            "skybrief_email_success_message",
+            None,
+        )
+    )
+
+
+    if email_success_message:
+
+        st.success(
+            email_success_message
+        )
+
+
     st.caption(
         f"Ready for {len(final_receivers)} "
-        f"{'person' if len(final_receivers) == 1 else 'people'} · "
-        f"{question_count} Q&A "
+        f"{'person' if len(final_receivers) == 1 else 'people'} "
+        f"\u00B7 {question_count} Q&A "
         f"{'exchange' if question_count == 1 else 'exchanges'} "
         "included."
     )
+
+
+    # --------------------------------------------------------
+    # Lightweight per-session email protection
+    # --------------------------------------------------------
+
+    EMAIL_SEND_LIMIT = 3
+    EMAIL_SEND_COOLDOWN_SECONDS = 60
+
+
+    email_send_count = (
+        st.session_state.get(
+            "skybrief_email_send_count",
+            0,
+        )
+    )
+
+
+    last_email_send_at = (
+        st.session_state.get(
+            "skybrief_email_last_send_at",
+            0.0,
+        )
+    )
+
+
+    seconds_since_last_send = (
+        time.time()
+        - last_email_send_at
+    )
+
+
+    cooldown_remaining = max(
+        0,
+        int(
+            EMAIL_SEND_COOLDOWN_SECONDS
+            - seconds_since_last_send
+        ),
+    )
+
+
+    email_limit_reached = (
+        email_send_count
+        >= EMAIL_SEND_LIMIT
+    )
+
+
+    email_cooldown_active = (
+        cooldown_remaining > 0
+    )
+
+
+    st.caption(
+        f"Email sends this session: "
+        f"{email_send_count}/{EMAIL_SEND_LIMIT}"
+    )
+
+
+    if email_limit_reached:
+
+        st.warning(
+            "This session has reached the "
+            "email-send limit."
+        )
+
+
+    elif email_cooldown_active:
+
+        st.info(
+            f"Email cooldown active. "
+            f"Try again in about "
+            f"{cooldown_remaining} seconds."
+        )
 
 
     send_final_email = st.button(
@@ -1119,77 +1213,120 @@ if "skybrief_report" in st.session_state:
         type="primary",
         width="stretch",
         key="send_final_skybrief",
+        disabled=email_limit_reached,
     )
 
 
     if send_final_email:
 
-        try:
+        # ----------------------------------------------------
+        # Do not call Brevo while cooldown is active.
+        # ----------------------------------------------------
 
-            with st.spinner(
-                "Packaging your SkyBrief..."
-            ):
+        if email_cooldown_active:
 
-                send_result = (
-                    send_skybrief_email(
-                        api_key=BREVO_API_KEY,
+            st.warning(
+                f"Please wait about "
+                f"{cooldown_remaining} seconds "
+                f"before sending another SkyBrief."
+            )
 
-                        sender_email=(
-                            SENDER_EMAIL
-                        ),
 
-                        sender_name=(
-                            SENDER_NAME
-                        ),
+        else:
 
-                        receiver_emails=(
-                            final_receivers
-                        ),
+            try:
 
-                        location_name=(
-                            location
-                        ),
+                with st.spinner(
+                    "Packaging your SkyBrief..."
+                ):
 
-                        current_summary=(
-                            current
-                        ),
+                    send_result = (
+                        send_skybrief_email(
+                            api_key=BREVO_API_KEY,
 
-                        daily_summary_df=(
-                            daily_df
-                        ),
+                            sender_email=(
+                                SENDER_EMAIL
+                            ),
 
-                        ai_text=(
-                            ai_result["text"]
-                        ),
+                            sender_name=(
+                                SENDER_NAME
+                            ),
 
-                        qa_history=(
-                            qa_history_for_email
-                        ),
+                            receiver_emails=(
+                                final_receivers
+                            ),
+
+                            location_name=(
+                                location
+                            ),
+
+                            current_summary=(
+                                current
+                            ),
+
+                            daily_summary_df=(
+                                daily_df
+                            ),
+
+                            ai_text=(
+                                ai_result["text"]
+                            ),
+
+                            qa_history=(
+                                qa_history_for_email
+                            ),
+                        )
                     )
+
+
+                # --------------------------------------------
+                # Count only successful Brevo submissions.
+                # --------------------------------------------
+
+                st.session_state[
+                    "skybrief_email_send_count"
+                ] = (
+                    email_send_count
+                    + 1
                 )
 
 
-            sent_count = send_result[
-                "recipient_count"
-            ]
-
-            st.success(
-                f"☁️ SkyBrief accepted for delivery "
-                f"to {sent_count} "
-                f"{'person' if sent_count == 1 else 'people'}."
-            )
+                st.session_state[
+                    "skybrief_email_last_send_at"
+                ] = time.time()
 
 
-        except Exception as error:
+                sent_count = send_result[
+                    "recipient_count"
+                ]
 
-            st.error(
-                "SkyBrief couldn't send the email."
-            )
 
-            with st.expander(
-                "Technical details"
-            ):
-
-                st.code(
-                    str(error)
+                st.session_state[
+                    "skybrief_email_success_message"
+                ] = (
+                    "\u2601\ufe0f SkyBrief accepted for "
+                    f"delivery to {sent_count} "
+                    f"{'person' if sent_count == 1 else 'people'}."
                 )
+
+
+                # --------------------------------------------
+                # Rerun so 0/3 immediately becomes 1/3.
+                # --------------------------------------------
+
+                st.rerun()
+
+
+            except Exception as error:
+
+                st.error(
+                    "SkyBrief couldn't send the email."
+                )
+
+                with st.expander(
+                    "Technical details"
+                ):
+
+                    st.code(
+                        str(error)
+                    )

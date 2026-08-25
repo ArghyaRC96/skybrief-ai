@@ -248,6 +248,9 @@ def answer_weather_question(
     """
     Answer one weather question with full conversational
     continuity and awareness of the 3-question limit.
+
+    Gemini 3.7 Flash gets one attempt.
+    Gemini 3.6 Flash is the immediate fallback.
     """
 
     question = question.strip()
@@ -315,6 +318,13 @@ If Final question is True:
         api_key=api_key
     )
 
+    primary_error = None
+
+
+    # --------------------------------------------------------
+    # Primary model: one attempt only
+    # --------------------------------------------------------
+
     try:
 
         answer = _generate_answer(
@@ -327,39 +337,42 @@ If Final question is True:
             "answer": answer,
             "model": PRIMARY_MODEL,
             "used_fallback": False,
+            "primary_error": None,
         }
+
 
     except Exception as error:
 
-        if _is_transient_error(error):
+        primary_error = str(
+            error
+        )
 
-            time.sleep(1.0)
 
-            try:
+    # --------------------------------------------------------
+    # Immediate fallback
+    # --------------------------------------------------------
 
-                answer = _generate_answer(
-                    client=client,
-                    model_name=PRIMARY_MODEL,
-                    prompt=prompt,
-                )
+    try:
 
-                return {
-                    "answer": answer,
-                    "model": PRIMARY_MODEL,
-                    "used_fallback": False,
-                }
+        answer = _generate_answer(
+            client=client,
+            model_name=FALLBACK_MODEL,
+            prompt=prompt,
+        )
 
-            except Exception:
-                pass
+        return {
+            "answer": answer,
+            "model": FALLBACK_MODEL,
+            "used_fallback": True,
+            "primary_error": primary_error,
+        }
 
-    answer = _generate_answer(
-        client=client,
-        model_name=FALLBACK_MODEL,
-        prompt=prompt,
-    )
 
-    return {
-        "answer": answer,
-        "model": FALLBACK_MODEL,
-        "used_fallback": True,
-    }
+    except Exception as fallback_error:
+
+        raise RuntimeError(
+            "Ask the Sky generation failed. "
+            f"Primary error: {primary_error}. "
+            f"Fallback error: {fallback_error}"
+        ) from fallback_error
+
