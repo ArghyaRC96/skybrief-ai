@@ -6,6 +6,12 @@ It transforms numerical forecast data into interactive weather signals, grounded
 
 ---
 
+## Live Demo
+
+SkyBrief AI is deployed on Streamlit Community Cloud.
+
+[Launch SkyBrief AI](https://skybrief-ai.streamlit.app/)
+
 ## Features
 
 - Preset Indian cities plus manual latitude and longitude
