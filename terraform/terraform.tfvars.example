@@ -1,0 +1,19 @@
+aws_region = "ap-south-1"
+
+project_name = "open-weather-email-service"
+
+openweather_api_key = "REPLACE_WITH_YOUR_OPENWEATHER_API_KEY"
+
+sender_email = "your_verified_sender@example.com"
+
+sender_name = "Weather Forecast Service"
+
+receiver_email = "receiver@example.com"
+
+latitude = "12.9716"
+
+longitude = "77.5946"
+
+location_name = "Bangalore, India"
+
+schedule_expression = "cron(0 8 * * ? *)"
