@@ -243,7 +243,7 @@ The language model is used for interpretation and planning assistance. Numerical
 Current model configuration:
 
 ```text
-Primary model  : gemini-3.7-flash
+Primary model  : gemini-3.6-flash
 Fallback model : gemini-3.6-flash
 Thinking level : low
 ```
@@ -316,6 +316,19 @@ google-genai==2.19.0
 ```
 
 ---
+
+## Runtime Reliability
+
+SkyBrief uses a bounded Gemini runtime designed to keep
+public-app latency predictable.
+
+- Model: `gemini-3.6-flash`
+- Thinking level: low
+- Request timeout: 45 seconds per attempt
+- Retry policy: one retry, two total attempts
+- Gemini SDK internal retries are disabled
+- Core AI modules remain independent of Streamlit
+- OpenWeather data remains the source of truth
 
 ## Security
 

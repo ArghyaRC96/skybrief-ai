@@ -1,13 +1,15 @@
 import json
-import time
 from datetime import date, datetime
 
-from google import genai
 from google.genai import types
 
+from .gemini_runtime import (
+    GEMINI_MODEL,
+    create_gemini_client,
+    run_with_one_retry,
+)
 
-PRIMARY_MODEL = "gemini-3.7-flash"
-FALLBACK_MODEL = "gemini-3.6-flash"
+
 
 
 SYSTEM_INSTRUCTION = """
@@ -199,62 +201,17 @@ WEATHER DATA:
     return prompt
 
 
-def _is_transient_error(error):
-    """
-    Identify errors that are reasonable to retry.
-
-    Typical transient HTTP status codes include:
-    429, 500, 502, 503 and 504.
-    """
-
-    transient_status_codes = {
-        429,
-        500,
-        502,
-        503,
-        504,
-    }
-
-    status_code = getattr(
-        error,
-        "status_code",
-        None,
-    )
-
-    if status_code in transient_status_codes:
-        return True
-
-    error_text = str(error).upper()
-
-    transient_markers = [
-        "429",
-        "500",
-        "502",
-        "503",
-        "504",
-        "RESOURCE_EXHAUSTED",
-        "INTERNAL",
-        "UNAVAILABLE",
-        "TIMEOUT",
-    ]
-
-    return any(
-        marker in error_text
-        for marker in transient_markers
-    )
-
-
 def _generate_with_model(
     client,
-    model_name,
     prompt,
 ):
     """
-    Send one grounded generation request to Gemini.
+    Send one grounded weather-insight request
+    to Gemini.
     """
 
     response = client.models.generate_content(
-        model=model_name,
+        model=GEMINI_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_INSTRUCTION,
@@ -272,11 +229,11 @@ def _generate_with_model(
 
     if not response_text:
         raise RuntimeError(
-            f"{model_name} returned an empty response."
+            f"{GEMINI_MODEL} returned "
+            "an empty response."
         )
 
     return response_text.strip()
-
 
 def generate_weather_insights(
     api_key,
@@ -287,16 +244,12 @@ def generate_weather_insights(
     """
     Generate SkyBrief weather insights.
 
-    Strategy:
-    1. Try Gemini 3.7 Flash once.
-    2. If it fails for any reason, immediately use
-       Gemini 3.6 Flash.
+    Runtime policy:
+    - Gemini 3.6 Flash
+    - low thinking
+    - 45 second request timeout
+    - one retry
     """
-
-    if not api_key:
-        raise ValueError(
-            "Gemini API key is required."
-        )
 
     prompt = build_weather_prompt(
         current_summary=current_summary,
@@ -304,64 +257,23 @@ def generate_weather_insights(
         daily_summary_df=daily_summary_df,
     )
 
-    client = genai.Client(
+    client = create_gemini_client(
         api_key=api_key
     )
 
-    primary_error = None
-
-
-    # --------------------------------------------------------
-    # Primary model: one attempt only
-    # --------------------------------------------------------
-
-    try:
-
-        text_result = _generate_with_model(
+    text_result = run_with_one_retry(
+        operation=lambda: _generate_with_model(
             client=client,
-            model_name=PRIMARY_MODEL,
             prompt=prompt,
-        )
+        ),
+        operation_name=(
+            "SkyBrief AI insight generation"
+        ),
+    )
 
-        return {
-            "text": text_result,
-            "model": PRIMARY_MODEL,
-            "used_fallback": False,
-            "primary_error": None,
-        }
-
-
-    except Exception as error:
-
-        primary_error = str(
-            error
-        )
-
-
-    # --------------------------------------------------------
-    # Immediate fallback
-    # --------------------------------------------------------
-
-    try:
-
-        text_result = _generate_with_model(
-            client=client,
-            model_name=FALLBACK_MODEL,
-            prompt=prompt,
-        )
-
-        return {
-            "text": text_result,
-            "model": FALLBACK_MODEL,
-            "used_fallback": True,
-            "primary_error": primary_error,
-        }
-
-
-    except Exception as fallback_error:
-
-        raise RuntimeError(
-            "SkyBrief AI insight generation failed. "
-            f"Primary error: {primary_error}. "
-            f"Fallback error: {fallback_error}"
-        ) from fallback_error
+    return {
+        "text": text_result,
+        "model": GEMINI_MODEL,
+        "used_fallback": False,
+        "primary_error": None,
+    }

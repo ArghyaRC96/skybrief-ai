@@ -1,11 +1,13 @@
-import time
 
-from google import genai
 from google.genai import types
 
+from .gemini_runtime import (
+    GEMINI_MODEL,
+    create_gemini_client,
+    run_with_one_retry,
+)
 
-PRIMARY_MODEL = "gemini-3.7-flash"
-FALLBACK_MODEL = "gemini-3.6-flash"
+
 
 
 QA_SYSTEM_INSTRUCTION = """
@@ -169,35 +171,13 @@ def _build_history_context(history):
     return "\n".join(lines)
 
 
-def _is_transient_error(error):
-
-    text = str(error).upper()
-
-    markers = [
-        "429",
-        "500",
-        "502",
-        "503",
-        "504",
-        "RESOURCE_EXHAUSTED",
-        "UNAVAILABLE",
-        "TIMEOUT",
-    ]
-
-    return any(
-        marker in text
-        for marker in markers
-    )
-
-
 def _generate_answer(
     client,
-    model_name,
     prompt,
 ):
 
     response = client.models.generate_content(
-        model=model_name,
+        model=GEMINI_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
             max_output_tokens=2000,
@@ -215,7 +195,8 @@ def _generate_answer(
 
     if not response.text:
         raise RuntimeError(
-            f"{model_name} returned an empty answer."
+            f"{GEMINI_MODEL} returned "
+            "an empty answer."
         )
 
     if response.candidates:
@@ -229,11 +210,11 @@ def _generate_answer(
         if "MAX_TOKENS" in finish_reason:
 
             raise RuntimeError(
-                f"{model_name} hit the output-token limit."
+                f"{GEMINI_MODEL} hit "
+                "the output-token limit."
             )
 
     return response.text.strip()
-
 
 def answer_weather_question(
     api_key,
@@ -246,11 +227,14 @@ def answer_weather_question(
     questions_remaining_after=2,
 ):
     """
-    Answer one weather question with full conversational
+    Answer one weather question with conversational
     continuity and awareness of the 3-question limit.
 
-    Gemini 3.7 Flash gets one attempt.
-    Gemini 3.6 Flash is the immediate fallback.
+    Each question gets:
+    - Gemini 3.6 Flash
+    - low thinking
+    - 45 second request timeout
+    - one retry
     """
 
     question = question.strip()
@@ -314,65 +298,25 @@ If Final question is True:
 - close by acknowledging that 3/3 questions are complete
 """.strip()
 
-    client = genai.Client(
+    client = create_gemini_client(
         api_key=api_key
     )
 
-    primary_error = None
-
-
-    # --------------------------------------------------------
-    # Primary model: one attempt only
-    # --------------------------------------------------------
-
-    try:
-
-        answer = _generate_answer(
+    answer = run_with_one_retry(
+        operation=lambda: _generate_answer(
             client=client,
-            model_name=PRIMARY_MODEL,
             prompt=prompt,
-        )
+        ),
+        operation_name=(
+            f"Ask the Sky question "
+            f"{question_number}"
+        ),
+    )
 
-        return {
-            "answer": answer,
-            "model": PRIMARY_MODEL,
-            "used_fallback": False,
-            "primary_error": None,
-        }
-
-
-    except Exception as error:
-
-        primary_error = str(
-            error
-        )
-
-
-    # --------------------------------------------------------
-    # Immediate fallback
-    # --------------------------------------------------------
-
-    try:
-
-        answer = _generate_answer(
-            client=client,
-            model_name=FALLBACK_MODEL,
-            prompt=prompt,
-        )
-
-        return {
-            "answer": answer,
-            "model": FALLBACK_MODEL,
-            "used_fallback": True,
-            "primary_error": primary_error,
-        }
-
-
-    except Exception as fallback_error:
-
-        raise RuntimeError(
-            "Ask the Sky generation failed. "
-            f"Primary error: {primary_error}. "
-            f"Fallback error: {fallback_error}"
-        ) from fallback_error
+    return {
+        "answer": answer,
+        "model": GEMINI_MODEL,
+        "used_fallback": False,
+        "primary_error": None,
+    }
 
